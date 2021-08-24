@@ -218,6 +218,25 @@ fn drop_threadpool_drops_futures() {
 }
 
 #[test]
+fn ordered_using_on_thread_park() {
+    static ORDER: AtomicUsize = AtomicUsize::new(0);
+    let rt = runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .on_thread_park(move || {
+            tokio::spawn(async move {
+                ORDER.fetch_add(1, Relaxed);
+            });
+        })
+        .build()
+        .unwrap();
+
+    rt.block_on(async move { while ORDER.load(Relaxed) < 100 {} });
+
+    let order = ORDER.load(Relaxed);
+    assert!(order >= 100);
+}
+
+#[test]
 fn start_stop_callbacks_called() {
     use std::sync::atomic::{AtomicUsize, Ordering};
 

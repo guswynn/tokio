@@ -13,7 +13,7 @@ pub(crate) use worker::block_in_place;
 
 use crate::loom::sync::Arc;
 use crate::runtime::task::{self, JoinHandle};
-use crate::runtime::Parker;
+use crate::runtime::{Callback, Parker};
 
 use std::fmt;
 use std::future::Future;
@@ -43,8 +43,12 @@ pub(crate) struct Spawner {
 // ===== impl ThreadPool =====
 
 impl ThreadPool {
-    pub(crate) fn new(size: usize, parker: Parker) -> (ThreadPool, Launch) {
-        let (shared, launch) = worker::create(size, parker);
+    pub(crate) fn new(
+        size: usize,
+        parker: Parker,
+        on_thread_park: Option<Callback>,
+    ) -> (ThreadPool, Launch) {
+        let (shared, launch) = worker::create(size, parker, on_thread_park);
         let spawner = Spawner { shared };
         let thread_pool = ThreadPool { spawner };
 
