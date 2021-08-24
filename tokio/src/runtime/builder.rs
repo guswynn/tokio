@@ -55,6 +55,8 @@ pub struct Builder {
     /// Only used when not using the current-thread executor.
     worker_threads: Option<usize>,
 
+    on_thread_park: Option<Callback>,
+
     /// Cap on thread usage.
     max_blocking_threads: usize,
 
@@ -123,6 +125,9 @@ impl Builder {
 
             // Default to lazy auto-detection (one thread per CPU core)
             worker_threads: None,
+
+            // No callback by default
+            on_thread_park: None,
 
             max_blocking_threads: 512,
 
@@ -217,6 +222,34 @@ impl Builder {
     pub fn worker_threads(&mut self, val: usize) -> &mut Self {
         assert!(val > 0, "Worker threads cannot be set to 0");
         self.worker_threads = Some(val);
+        self
+    }
+
+    /// Executes function `f` after each core worker thread is parked.
+    ///
+    /// This is intended for building ordered executors on top of tokio.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use tokio::runtime;
+    ///
+    /// # pub fn main() {
+    /// let runtime = runtime::Builder::new_multi_thread()
+    ///     .on_thread_park(|| {
+    ///         println!("thread parked");
+    ///     })
+    ///     .build();
+    /// # }
+    /// ```
+    ///
+    /// # Panic
+    ///
+    /// When using the `current_thread` runtime this method will panic, since
+    /// those variants do not allow setting worker thread counts.
+    ///
+    pub fn on_thread_park<F: Fn() + Send + Sync + 'static>(&mut self, f: F) -> &mut Self {
+        self.on_thread_park = Some(std::sync::Arc::new(f));
         self
     }
 
@@ -546,7 +579,7 @@ cfg_rt_multi_thread! {
 
             let (driver, resources) = driver::Driver::new(self.get_cfg())?;
 
-            let (scheduler, launch) = ThreadPool::new(core_threads, Parker::new(driver));
+            let (scheduler, launch) = ThreadPool::new(core_threads, Parker::new(driver), self.on_thread_park.clone());
             let spawner = Spawner::ThreadPool(scheduler.spawner().clone());
 
             // Create the blocking pool
@@ -580,6 +613,10 @@ impl fmt::Debug for Builder {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt.debug_struct("Builder")
             .field("worker_threads", &self.worker_threads)
+            .field(
+                "on_thread_park",
+                &self.on_thread_park.as_ref().map(|_| "..."),
+            )
             .field("max_blocking_threads", &self.max_blocking_threads)
             .field(
                 "thread_name",

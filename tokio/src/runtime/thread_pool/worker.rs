@@ -66,6 +66,7 @@ use crate::runtime::enter::EnterContext;
 use crate::runtime::park::{Parker, Unparker};
 use crate::runtime::task::{Inject, JoinHandle, OwnedTasks};
 use crate::runtime::thread_pool::{AtomicCell, Idle};
+use crate::runtime::Callback;
 use crate::runtime::{queue, task};
 use crate::util::FastRand;
 
@@ -111,6 +112,9 @@ struct Core {
     /// Stored in an `Option` as the parker is added / removed to make the
     /// borrow checker happy.
     park: Option<Parker>,
+
+    /// Callback to call when a core thread parks
+    on_thread_park: Option<Callback>,
 
     /// Fast random number generator.
     rand: FastRand,
@@ -174,7 +178,11 @@ type Notified = task::Notified<Arc<Shared>>;
 // Tracks thread-local state
 scoped_thread_local!(static CURRENT: Context);
 
-pub(super) fn create(size: usize, park: Parker) -> (Arc<Shared>, Launch) {
+pub(super) fn create(
+    size: usize,
+    park: Parker,
+    on_thread_park: Option<Callback>,
+) -> (Arc<Shared>, Launch) {
     let mut cores = vec![];
     let mut remotes = vec![];
 
@@ -192,6 +200,7 @@ pub(super) fn create(size: usize, park: Parker) -> (Arc<Shared>, Launch) {
             is_searching: false,
             is_shutdown: false,
             park: Some(park),
+            on_thread_park: on_thread_park.clone(),
             rand: FastRand::new(seed()),
         }));
 
@@ -443,6 +452,10 @@ impl Context {
 
     fn park(&self, mut core: Box<Core>) -> Box<Core> {
         core.transition_to_parked(&self.worker);
+
+        if let Some(ref callback) = core.on_thread_park {
+            callback();
+        }
 
         while !core.is_shutdown {
             core = self.park_timeout(core, None);
